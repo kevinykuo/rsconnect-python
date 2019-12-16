@@ -51,7 +51,7 @@ def get_default_locale():
     return '.'.join(locale.getdefaultlocale())
 
 
-def _parse_version_output(args):
+def _parse_version_output(args, module):
     try:
         proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
         stdout, stderr = proc.communicate()
@@ -67,12 +67,12 @@ def _parse_version_output(args):
 
 def get_module_version(module):
     args = [sys.executable, '-m', module, '--version']
-    return _parse_version_output(args)
+    return _parse_version_output(args, module)
 
 
 def get_binary_version(binary):
     args = [binary, '--version']
-    return _parse_version_output(args)
+    return _parse_version_output(args, binary)
 
 
 def output_file(dirname, filename, package_manager):
