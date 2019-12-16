@@ -24,8 +24,8 @@ def detect_environment(dirname):
     and contents if successful, or a dictionary containing 'error'
     on failure.
     """
-    result = (output_file(dirname, 'requirements.txt', 'pip') or
-              output_file(dirname, 'environment.yml', 'conda'))
+    result = (output_file(dirname, 'environment.yml', 'conda') or
+              output_file(dirname, 'requirements.txt', 'pip'))
 
     if result is None:
         if has_conda(os.environ):
