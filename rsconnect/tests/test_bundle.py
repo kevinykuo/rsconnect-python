@@ -29,7 +29,7 @@ class TestBundle(TestCase):
         # the test environment. Don't do this in the production code, which
         # runs in the notebook server. We need the introspection to run in
         # the kernel environment and not the notebook server environment.
-        environment = detect_environment(dir)
+        environment = detect_environment(dir, sys.executable)
         with make_notebook_source_bundle(nb_path, environment) as bundle, \
             tarfile.open(mode='r:gz', fileobj=bundle) as tar:
 
@@ -86,7 +86,7 @@ class TestBundle(TestCase):
         # the test environment. Don't do this in the production code, which
         # runs in the notebook server. We need the introspection to run in
         # the kernel environment and not the notebook server environment.
-        environment = detect_environment(dir)
+        environment = detect_environment(dir, sys.executable)
 
         with make_notebook_source_bundle(nb_path, environment, extra_files=['data.csv']) as bundle, \
             tarfile.open(mode='r:gz', fileobj=bundle) as tar:

@@ -19,7 +19,7 @@ class TestEnvironment(TestCase):
     	return '.'.join(map(str, sys.version_info[:3]))
 
     def test_file(self):
-        result = detect_environment(self.get_dir('pip1'))
+        result = detect_environment(self.get_dir('pip1'), sys.executable)
 
         pip_version = result.pop('pip')
         self.assertTrue(version_re.match(pip_version))
@@ -37,7 +37,7 @@ class TestEnvironment(TestCase):
         })
 
     def test_pip_freeze(self):
-        result = detect_environment(self.get_dir('pip2'))
+        result = detect_environment(self.get_dir('pip2'), sys.executable)
         contents = result.pop('contents')
 
         # these are the dependencies declared in our setup.py

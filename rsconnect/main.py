@@ -15,7 +15,7 @@ import click
 from six.moves.urllib_parse import urlparse
 
 from . import api
-from .environment import EnvironmentException
+from .environment import detect_environment, EnvironmentException
 from .bundle import (
     make_manifest_bundle,
     make_notebook_html_bundle,
@@ -334,7 +334,7 @@ def deploy_notebook(server, api_key, static, new, app_id, title, python, insecur
     with CLIFeedback('Inspecting python environment'):
         python = which_python(python)
         vecho('Python: %s' % python)
-        environment = inspect_environment(python, dirname(file))
+        environment = detect_environment(dirname(file), python)
         vecho('Environment: %s' % pformat(environment))
 
     with CLIFeedback('Creating deployment bundle'):
@@ -468,7 +468,7 @@ def manifest(force, python, _verbose, file, extra_files):
 
     with CLIFeedback('Inspecting python environment'):
         python = which_python(python)
-        environment = inspect_environment(python, dirname(file))
+        environment = detect_environment(dirname(file), python)
         environment_filename = environment['filename']
         if verbose:
             click.echo('Python: %s' % python)
