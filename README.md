@@ -77,19 +77,27 @@ rsconnect deploy notebook my-notebook.ipynb data.csv
 ```
 
 #### Package Dependencies
-If a `requirements.txt` file exists in the same directory as the notebook file, it will be included in the bundle. It must specify the package dependencies needed to execute the notebook. RStudio Connect will reconstruct the python environment using the specified package list.
 
-If there is no `requirements.txt` file, the package dependencies will be determined from the current Python environment, or from an alternative Python executable specified in the `--python` option or via the `RETICULATE_PYTHON` environment variable.
+If a requirements file exists in the same directory as the notebook file, it will be included in the bundle. It must specify all of the package dependencies needed to execute the notebook. RStudio Connect will reconstruct the python environment using the specified package list.
+
+Supported requirements files are `environment.yml` for Conda dependencies, or `requirements.txt` for pip dependencies.
+
+If there is no requirements file in the directory, the package dependencies will be determined from the current Python environment. This is done using the command `conda env export` if a Conda environment is active; otherwise, `pip freeze` is used. You can specify an alternative Python executable using the `--python` option, or via the `RETICULATE_PYTHON` environment variable.
 
 ```
 rsconnect deploy notebook --python /path/to/python my-notebook.ipynb
 ```
 
-You can see the packages list that will be included by running `pip freeze` yourself, ensuring that you use the same Python that you use to run your Jupyter Notebook:
+You can see the package list that will be included by running `conda env export` or `pip freeze` yourself, ensuring that you use the same Python that you use to run your Jupyter Notebook:
 
 ```
 /path/to/python -m pip freeze
 ```
+
+```
+conda env export -n my-environment
+```
+
 
 #### Static (Snapshot) Deployment
 By default, `rsconnect` deploys the original notebook with source code. This enables the RStudio Connect server to re-run the notebook upon request or on a schedule.
@@ -103,7 +111,7 @@ rsconnect deploy notebook --static my-notebook.ipynb
 #### Creating a Manifest for Future Deployment
 You can create a `manifest.json` file for a Jupyter Notebook, then use that manifest in a later deployment. 
 
-The `manifest` command will also create a `requirements.txt` file, if it does not already exist. It will contain the package dependencies from the current Python environment, or from an alternative Python executable specified in the `--python` option or via the `RETICULATE_PYTHON` environment variable.
+The `manifest` command will inspect the Python environment to determine the packages present, then  create a package requirements file if needed. This will be `environment.yml` if a Conda environment is active, or `requirements.txt` for pip. It will contain the package dependencies from the current Python environment, or from an alternative Python executable specified in the `--python` option or via the `RETICULATE_PYTHON` environment variable.
 
 Note: manifests for static (pre-rendered) notebooks cannot be created.
 
