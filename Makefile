@@ -17,7 +17,8 @@ all-tests: all-images test-2.7 test-3.5 test-3.6 test-3.7 test-3.8
 all-images: image-2.7 image-3.5 image-3.6 image-3.7 image-3.8
 
 image-%:
-	docker build -t rsconnect-python:$* --build-arg BASE_IMAGE=python:$* .
+	docker build -t rsconnect-python:$* \
+		--build-arg PYTHON_VERSION=$* .
 
 shell-%:
 	$(RUNNER) 'python setup.py develop --user && bash'
