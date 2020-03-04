@@ -39,8 +39,9 @@ class AppModes(object):
     TENSORFLOW = AppMode(6, 'tensorflow-saved-model', 'TensorFlow Model')
     JUPYTER_NOTEBOOK = AppMode(7, 'jupyter-static', 'Jupyter Notebook', '.ipynb')
     PYTHON_API = AppMode(8, 'python-api', 'Python API')
+    PYTHON_DASH = AppMode(8, 'python-dash', 'Dash app')
 
-    _modes = [UNKNOWN, SHINY, RMD, SHINY_RMD, STATIC, PLUMBER, TENSORFLOW, JUPYTER_NOTEBOOK, PYTHON_API]
+    _modes = [UNKNOWN, SHINY, RMD, SHINY_RMD, STATIC, PLUMBER, TENSORFLOW, JUPYTER_NOTEBOOK, PYTHON_API, PYTHON_DASH]
 
     @classmethod
     def get_by_ordinal(cls, ordinal, return_unknown=False):
