@@ -6,13 +6,12 @@ import re
 import traceback
 import sys
 import subprocess
-from os.path import abspath, basename, dirname, exists, isdir, join, splitext
+from os.path import abspath, basename, dirname, exists, isdir, join, relpath, splitext
 from pprint import pformat
 
 from rsconnect import api
-from .bundle import expand_globs, keep_manifest_specified_file, make_api_bundle, make_manifest_bundle,\
-    make_notebook_html_bundle, make_notebook_source_bundle, make_source_manifest, manifest_add_buffer,\
-    manifest_add_file, read_manifest_file
+from .bundle import make_api_bundle, make_api_manifest, make_manifest_bundle,  make_notebook_html_bundle, \
+    make_notebook_source_bundle, make_source_manifest, manifest_add_buffer, manifest_add_file, read_manifest_file
 from .environment import EnvironmentException
 from .metadata import AppStore
 from .models import AppModes
@@ -278,9 +277,9 @@ def check_server_capabilities(connect_server, capability_functions, details_sour
 
 def _make_deployment_name(connect_server, title, force_unique):
     """
-    Produce a name for a deployment based on its title.  It is assumed that title
-    detfaulting/validation has already taken place (meaning the title isn't None
-    or empty).
+    Produce a name for a deployment based on its title.  It is assumed that the
+    title is already defaulted and validated as appropriate (meaning the title
+    isn't None or empty).
 
     We follow the same rules for doing this as the R rsconnect package does.  See
     the title.R code in https://github.com/rstudio/rsconnect/R with the exception
@@ -361,19 +360,25 @@ def validate_file_is_notebook(file_name):
 
 def validate_extra_files(directory, extra_files):
     """
-    If the user specified a list of extra files, validate that they all exist and, if
-    so, return a list of them qualified by the specified directory.
+    If the user specified a list of extra files, validate that they all exist and are
+    beneath the given directory and, if so, return a list of them made relative to that
+    directory.
 
     :param directory: the directory that the extra files must be relative to.
     :param extra_files: the list of extra files to qualify and validate.
     :return: the extra files qualified by the directory.
     """
     result = []
-    for extra in extra_files:
-        extra_file = join(directory, extra)
-        if not exists(extra_file):
-            raise api.RSConnectException('Could not find file %s in %s' % (extra, directory))
-        result.append(extra_file)
+    if extra_files:
+        for extra in extra_files:
+            extra_file = relpath(directory, extra)
+            # It's an error if we have to leave the given dir to get to the extra
+            # file.
+            if extra_file.startswith('../'):
+                raise api.RSConnectException('%s must be under %s.' % (extra_file, directory))
+            if not exists(join(directory, extra_file)):
+                raise api.RSConnectException('Could not find file %s under %s' % (extra, directory))
+            result.append(extra_file)
     return result
 
 
@@ -816,7 +821,7 @@ def write_notebook_manifest_json(entry_point_file, environment, app_mode=None, e
     :return: whether or not the environment file (requirements.txt, environment.yml,
     etc.) that goes along with the manifest exists.
     """
-    extra_files = extra_files or []
+    extra_files = validate_extra_files(dirname(entry_point_file), extra_files)
     directory = dirname(entry_point_file)
     file_name = basename(entry_point_file)
     manifest_path = join(directory, 'manifest.json')
@@ -879,29 +884,12 @@ def write_api_manifest_json(directory, entry_point, environment, app_mode=AppMod
     :return: whether or not the environment file (requirements.txt, environment.yml,
     etc.) that goes along with the manifest exists.
     """
-    extra_files = extra_files or []
-    excludes = expand_globs(directory, excludes)
+    extra_files = validate_extra_files(directory, extra_files)
+    manifest, _ = make_api_manifest(directory, entry_point, app_mode, environment, extra_files, excludes)
     manifest_path = join(directory, 'manifest.json')
 
-    manifest_data = make_source_manifest(entry_point, environment, app_mode)
-    manifest_add_buffer(manifest_data, environment['filename'], environment['contents'])
-
-    for subdir, dirs, files in os.walk(directory):
-        for file in files:
-            abs_path = os.path.join(subdir, file)
-            rel_path = os.path.relpath(abs_path, directory)
-
-            if keep_manifest_specified_file(rel_path) and (rel_path in extra_files or abs_path not in excludes):
-                manifest_add_file(manifest_data, rel_path, directory)
-                # Don't add extra files more than once.
-                if rel_path in extra_files:
-                    extra_files.remove(rel_path)
-
-    for rel_path in extra_files:
-        manifest_add_file(manifest_data, rel_path, directory)
-
     with open(manifest_path, 'w') as f:
-        json.dump(manifest_data, f, indent=2)
+        json.dump(manifest, f, indent=2)
 
     return exists(join(directory, environment['filename']))
 

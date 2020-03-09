@@ -1,5 +1,3 @@
-import ctypes
-import glob
 import hashlib
 import io
 import json
@@ -8,31 +6,18 @@ import os
 import subprocess
 import tarfile
 import tempfile
+import threading
 
 from os.path import basename, dirname, exists, isdir, join, relpath, splitext
 
-from rsconnect.models import AppModes
+import click
+
+from rsconnect.models import AppModes, GlobSet
 
 log = logging.getLogger('rsconnect')
 # From https://github.com/rstudio/rsconnect/blob/485e05a26041ab8183a220da7a506c9d3a41f1ff/R/bundle.R#L85-L88
 # noinspection SpellCheckingInspection
 directories_to_ignore = ['rsconnect-python/', 'packrat/', '.svn/', '.git/', '.Rproj.user/']
-
-
-# Special hidden check for Windows systems.
-def has_hidden_attribute(filepath):
-    try:
-        attrs = ctypes.windll.kernel32.GetFileAttributesW(filepath)
-        assert attrs != -1
-        result = bool(attrs & 2)
-    except (AttributeError, AssertionError):
-        result = False
-    return result
-
-
-def is_hidden(filepath):
-    name = os.path.basename(os.path.abspath(filepath))
-    return name.startswith('.') or has_hidden_attribute(filepath)
 
 
 # noinspection SpellCheckingInspection
@@ -105,14 +90,22 @@ def to_bytes(s):
     return s
 
 
+def _log_adding_file(rel_path):
+    if log.isEnabledFor(logging.DEBUG):
+        if threading.local().is_cli:
+            click.secho('\n    %s ' % rel_path, nl=False, fg='white')
+        else:
+            log.debug('adding file: %s', rel_path)
+
+
 def bundle_add_file(bundle, rel_path, base_dir):
     """Add the specified file to the tarball.
 
     The file path is relative to the notebook directory.
     """
+    _log_adding_file(rel_path)
     path = join(base_dir, rel_path)
     bundle.add(path, arcname=rel_path)
-    log.debug('added file: %s', path)
 
 
 def bundle_add_buffer(bundle, filename, contents):
@@ -120,11 +113,11 @@ def bundle_add_buffer(bundle, filename, contents):
 
     `contents` may be a string or bytes object
     """
+    _log_adding_file(filename)
     buf = io.BytesIO(to_bytes(contents))
     file_info = tarfile.TarInfo(filename)
     file_info.size = len(buf.getvalue())
     bundle.addfile(file_info, buf)
-    log.debug('added buffer: %s', filename)
 
 
 def write_manifest(relative_dir, nb_name, environment, output_dir):
@@ -324,37 +317,17 @@ def make_manifest_bundle(manifest_path):
     return bundle_file
 
 
-def _get_hidden_files(directory):
+def create_glob_set(directory, excludes):
     """
-    Look in a directory for hidden files.  The result will be a sequence of
-    those files.  If a hidden directory is found, then **all** files under
-    that directory are also considered hidden and returned in the result.
+    Takes a list of glob strings and produces a GlobSet for path matching.
 
-    :param directory: the directory to search.
-    :return: the list of hidden files in that directory.
-    """
-    result = []
-    for name in os.listdir(directory):
-        path = join(directory, name)
-        if is_hidden(path):
-            if isdir(path):
-                for subdir, dirs, files in os.walk(path):
-                    for file in files:
-                        result.append(join(subdir, file))
-            else:
-                result.append(path)
-    return result
-
-
-def expand_globs(directory, excludes):
-    """
-    Takes a list of glob strings, joins each one in turn to the specified directory
-    and produce a list of matching files.  The list returned is sorted and will not
-    contain duplicates.
+    **Note:** we don't use Python's glob support because it takes way too
+    long to run when large file trees are involved in conjunction with the
+    '**' pattern.
 
     :param directory: the directory the globs are relative to.
     :param excludes: the list of globs to expand.
-    :return: a sorted list of unique file names.
+    :return: a GlobSet ready for path matching.
     """
     work = []
     if excludes:
@@ -362,19 +335,76 @@ def expand_globs(directory, excludes):
             file_pattern = join(directory, pattern)
             # Special handling, if they gave us just a dir then "do the right thing".
             if isdir(file_pattern):
-                file_pattern = join(file_pattern, '/**/*')
-            files = glob.glob(file_pattern, recursive=True)
-            hidden = []
-            # Since glob doesn't see hidden files, look for any hidden files/dirs under
-            # an excluded directory.
-            for file in files:
-                if isdir(file):
-                    hidden.extend(_get_hidden_files(file))
-            work.extend(files)
-            work.extend(hidden)
+                file_pattern = join(file_pattern, '**/*')
+            work.append(file_pattern)
 
-    # Remove unnecessary duplicates.
-    return sorted(list(set(work)))
+    return GlobSet(work)
+
+
+def create_api_file_list(directory, requirements_file_name, extra_files=None, excludes=None):
+    """
+    Builds a full list of files under the given directory that should be included
+    in a manifest or bundle.  Extra files and excludes are relative to the given
+    directory and work as you'd expect.
+
+    :param directory: the directory to walk for files.
+    :param requirements_file_name: the name of the requirements file for the current
+    Python environment.
+    :param extra_files: a sequence of any extra files to include in the bundle.
+    :param excludes: a sequence of glob patterns that will exclude matched files.
+    :return: the list of relevant files.
+    """
+    # Don't let these top-level files be added via the extra files list.
+    extra_files = extra_files or []
+    skip = [requirements_file_name, 'manifest.json']
+    extra_files = sorted(list(set(extra_files) - set(skip)))
+
+    # Don't include these top-level files.
+    excludes = list(excludes) if excludes else []
+    excludes.append('manifest.json')
+    excludes.append(requirements_file_name)
+    glob_set = create_glob_set(directory, excludes)
+
+    file_list = []
+
+    for subdir, dirs, files in os.walk(directory):
+        for file in files:
+            abs_path = os.path.join(subdir, file)
+            rel_path = os.path.relpath(abs_path, directory)
+
+            if keep_manifest_specified_file(rel_path) and (rel_path in extra_files or not glob_set.matches(abs_path)):
+                file_list.append((abs_path, rel_path))
+                # Don't add extra files more than once.
+                if rel_path in extra_files:
+                    extra_files.remove(rel_path)
+
+    for rel_path in extra_files:
+        file_list.append((None, rel_path))
+
+    return sorted(file_list)
+
+
+def make_api_manifest(directory, entry_point, app_mode, environment, extra_files=None, excludes=None):
+    """
+    Makes a manifest for an API.
+
+    :param directory: the directory containing the files to deploy.
+    :param entry_point: the main entry point for the API.
+    :param app_mode: the app mode to use.
+    :param environment: the Python environment information.
+    :param extra_files: a sequence of any extra files to include in the bundle.
+    :param excludes: a sequence of glob patterns that will exclude matched files.
+    :return: the manifest and a list of the files involved.
+    """
+    relevant_files = create_api_file_list(directory, environment['filename'], extra_files, excludes)
+    manifest = make_source_manifest(entry_point, environment, app_mode)
+
+    manifest_add_buffer(manifest, environment['filename'], environment['contents'])
+
+    for _, rel_path in relevant_files:
+        manifest_add_file(manifest, rel_path, directory)
+
+    return manifest, relevant_files
 
 
 def make_api_bundle(directory, entry_point, app_mode, environment, extra_files=None, excludes=None):
@@ -389,41 +419,18 @@ def make_api_bundle(directory, entry_point, app_mode, environment, extra_files=N
     :param excludes: a sequence of glob patterns that will exclude matched files.
     :return: a file-like object containing the bundle tarball.
     """
-    if extra_files is None:
-        extra_files = []
-
-    manifest = make_source_manifest(entry_point, environment, app_mode)
+    manifest, relevant_files = make_api_manifest(directory, entry_point, app_mode, environment, extra_files, excludes)
     bundle_file = tempfile.TemporaryFile(prefix='rsc_bundle')
-    excludes = expand_globs(directory, excludes)
-
-    manifest_add_buffer(manifest, environment['filename'], environment['contents'])
-
-    if extra_files:
-        skip = [environment['filename'], 'manifest.json']
-        extra_files = sorted(list(set(extra_files) - set(skip)))
-
-    for rel_path in extra_files:
-        manifest_add_file(manifest, rel_path, directory)
 
     with tarfile.open(mode='w:gz', fileobj=bundle_file) as bundle:
         bundle_add_buffer(bundle, 'manifest.json', json.dumps(manifest, indent=2))
         bundle_add_buffer(bundle, environment['filename'], environment['contents'])
 
-        for subdir, dirs, files in os.walk(directory):
-            for file in files:
-                abs_path = os.path.join(subdir, file)
-                rel_path = os.path.relpath(abs_path, directory)
-
-                if keep_manifest_specified_file(rel_path) and \
-                        (rel_path in extra_files or abs_path not in excludes) and \
-                        rel_path != environment['filename']:
-                    bundle.add(abs_path, arcname=rel_path)
-                    # Don't add extra files more than once.
-                    if rel_path in extra_files:
-                        extra_files.remove(rel_path)
-
-        for rel_path in extra_files:
-            bundle_add_file(bundle, rel_path, directory)
+        for abs_path, rel_path in relevant_files:
+            if abs_path:
+                bundle.add(abs_path, arcname=rel_path)
+            else:
+                bundle_add_file(bundle, rel_path, directory)
 
     # rewind file pointer
     bundle_file.seek(0)
